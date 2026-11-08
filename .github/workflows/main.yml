@@ -17,9 +17,39 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      # Cache the manually provisioned Gradle distribution.
+      - name: Cache Gradle 8.13
+        uses: actions/cache@v4
         with:
-          gradle-version: '8.13'
+          path: ~/.gradle/manual/gradle-8.13
+          key: gradle-8.13-${{ runner.os }}
+
+      # setup-gradle@v4 failed before the build started when its distribution
+      # provisioning endpoint returned HTTP 504. Retry the download directly.
+      - name: Install Gradle 8.13 (retry on download errors)
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_HOME="$HOME/.gradle/manual/gradle-8.13"
+          if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
+            mkdir -p "$HOME/.gradle/manual"
+            ZIP="$RUNNER_TEMP/gradle-8.13-bin.zip"
+            URL="https://services.gradle.org/distributions/gradle-8.13-bin.zip"
+            if ! curl --fail --location --silent --show-error \
+              --retry 5 --retry-all-errors --retry-delay 10 \
+              --connect-timeout 30 --max-time 600 \
+              "$URL" --output "$ZIP"; then
+              echo "Primary Gradle distribution host failed; trying downloads.gradle.org"
+              curl --fail --location --silent --show-error \
+                --retry 5 --retry-all-errors --retry-delay 10 \
+                --connect-timeout 30 --max-time 600 \
+                "https://downloads.gradle.org/distributions/gradle-8.13-bin.zip" \
+                --output "$ZIP"
+            fi
+            unzip -q "$ZIP" -d "$HOME/.gradle/manual"
+          fi
+          echo "$GRADLE_HOME/bin" >> "$GITHUB_PATH"
+          "$GRADLE_HOME/bin/gradle" --version
 
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
